@@ -30,6 +30,10 @@ namespace FluidHTN.Contexts
 
         public Stack<KeyValuePair<EffectType, byte>>[] WorldStateChangeStack { get; protected set; }
 
+        // The binding stack (fork fix 2, Dauie/numun#283). A list, so that a read can go from the
+        // newest value to the oldest by index.
+        private List<KeyValuePair<int, long>> _bindings;
+
         // ========================================================= INITIALIZATION
 
         public virtual void Init()
@@ -41,6 +45,11 @@ namespace FluidHTN.Contexts
                 {
                     WorldStateChangeStack[i] = new Stack<KeyValuePair<EffectType, byte>>();
                 }
+            }
+
+            if (_bindings == null)
+            {
+                _bindings = new List<KeyValuePair<int, long>>();
             }
 
             if (DebugMTR)
@@ -156,6 +165,50 @@ namespace FluidHTN.Contexts
                 {
                     stack.Pop();
                 }
+            }
+        }
+
+        // ========================================================= BINDING STACK HANDLING
+
+        public int BindingDepth => _bindings?.Count ?? 0;
+
+        public void SetBinding(int key, long value)
+        {
+            // The executor checks the conditions of a task again during execution. A binding is a
+            // planning value, so a condition that selects a value then keeps the values of the plan.
+            if (ContextState == ContextState.Executing)
+            {
+                return;
+            }
+
+            _bindings.Add(new KeyValuePair<int, long>(key, value));
+        }
+
+        public bool TryGetBinding(int key, out long value)
+        {
+            if (_bindings != null)
+            {
+                for (var i = _bindings.Count - 1; i >= 0; i--)
+                {
+                    if (_bindings[i].Key == key)
+                    {
+                        value = _bindings[i].Value;
+                        return true;
+                    }
+                }
+            }
+
+            value = 0;
+            return false;
+        }
+
+        public void TrimBindings(int depth)
+        {
+            // No check of the context state or of Init: a compound task can decompose in the
+            // executing state and before Init (the upstream tests do). A trim then has no values to remove.
+            if (_bindings != null && _bindings.Count > depth)
+            {
+                _bindings.RemoveRange(depth, _bindings.Count - depth);
             }
         }
 
