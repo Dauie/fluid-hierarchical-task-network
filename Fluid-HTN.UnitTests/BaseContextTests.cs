@@ -40,13 +40,13 @@ namespace Fluid_HTN.UnitTests
             Assert.AreEqual(false, ctx.LogDecomposition);
             Assert.AreEqual(true, ctx.MTRDebug == null);
             Assert.AreEqual(true, ctx.LastMTRDebug == null);
-            Assert.AreEqual(true, ctx.DecompositionLog == null);
+            Assert.AreEqual(true, ctx.DecompositionTrace == null);
         }
 
         /// <summary>
         /// Verifies that Init initializes debug logging collections when the context has debug flags enabled.
         /// Derived contexts can override DebugMTR and LogDecomposition flags to enable detailed decomposition tracing.
-        /// When debug is enabled, Init allocates MTRDebug (Method Traversal Record for selector choices), LastMTRDebug (previous MTR for comparison), and DecompositionLog (detailed decomposition trace).
+        /// When debug is enabled, Init allocates MTRDebug (Method Traversal Record for selector choices), LastMTRDebug (previous MTR for comparison), and DecompositionTrace (structured decomposition trace records).
         /// This test confirms that debug contexts properly initialize all logging infrastructure to support detailed plan analysis during development.
         /// </summary>
         [TestMethod]
@@ -60,7 +60,7 @@ namespace Fluid_HTN.UnitTests
             Assert.AreEqual(true, ctx.LogDecomposition);
             Assert.AreEqual(true, ctx.MTRDebug != null);
             Assert.AreEqual(true, ctx.LastMTRDebug != null);
-            Assert.AreEqual(true, ctx.DecompositionLog != null);
+            Assert.AreEqual(true, ctx.DecompositionTrace != null);
         }
 
         /// <summary>

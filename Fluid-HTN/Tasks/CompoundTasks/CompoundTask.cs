@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using FluidHTN.Conditions;
 using FluidHTN.PrimitiveTasks;
+using FluidHTN.Debug;
 
 namespace FluidHTN.Compounds
 {
@@ -74,15 +75,9 @@ namespace FluidHTN.Compounds
         {
             foreach (var condition in Conditions)
             {
-                var result = condition.IsValid(ctx);
-                
-                if (ctx.LogDecomposition)
+                if (condition.IsValid(ctx) == false)
                 {
-                    Log(ctx, $"CompoundTask.IsValid:{(result ? "Success" : "Failed")}:{condition.Name} is{(result ? "" : " not")} valid!", result ? ConsoleColor.DarkGreen : ConsoleColor.DarkRed);
-                }
-
-                if (result == false)
-                {
+                    ctx.AddTrace(Parent, this, TraceOutcome.Refused, condition);
                     return false;
                 }
             }
@@ -90,11 +85,31 @@ namespace FluidHTN.Compounds
             return true;
         }
 
-        // ========================================================= LOGGING
+        // ========================================================= TRACE
 
-        protected virtual void Log(IContext ctx, string description, ConsoleColor color = ConsoleColor.White)
+        /// <summary>
+        ///     Add a trace record for a method of this task that passed its conditions, and return the status.
+        ///     A method that its conditions refuse adds its own record in IsValid, with the condition.
+        /// </summary>
+        protected DecompositionStatus Trace(IContext ctx, ITask method, DecompositionStatus status)
         {
-            ctx.Log(Name, description, ctx.CurrentDecompositionDepth, this, color);
+            ctx.AddTrace(this, method, ToTraceOutcome(status), null);
+            return status;
+        }
+
+        private static TraceOutcome ToTraceOutcome(DecompositionStatus status)
+        {
+            switch (status)
+            {
+                case DecompositionStatus.Succeeded:
+                    return TraceOutcome.Succeeded;
+                case DecompositionStatus.Partial:
+                    return TraceOutcome.Partial;
+                case DecompositionStatus.Rejected:
+                    return TraceOutcome.Rejected;
+                default:
+                    return TraceOutcome.Failed;
+            }
         }
     }
 }

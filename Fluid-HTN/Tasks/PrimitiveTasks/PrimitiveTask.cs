@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using FluidHTN.Compounds;
 using FluidHTN.Conditions;
 using FluidHTN.Operators;
+using FluidHTN.Debug;
 
 namespace FluidHTN.PrimitiveTasks
 {
@@ -60,27 +61,9 @@ namespace FluidHTN.PrimitiveTasks
 
         public void ApplyEffects(IContext ctx)
         {
-            if (ctx.ContextState == ContextState.Planning)
-            {
-                if (ctx.LogDecomposition)
-                {
-                    Log(ctx, $"PrimitiveTask.ApplyEffects", ConsoleColor.Yellow);
-                }
-            }
-
-            if (ctx.LogDecomposition)
-            {
-                ctx.CurrentDecompositionDepth++;
-            }
-
             foreach (var effect in Effects)
             {
                 effect.Apply(ctx);
-            }
-
-            if (ctx.LogDecomposition)
-            {
-                ctx.CurrentDecompositionDepth--;
             }
         }
 
@@ -98,52 +81,16 @@ namespace FluidHTN.PrimitiveTasks
 
         public bool IsValid(IContext ctx)
         {
-            if (ctx.LogDecomposition)
-            {
-                Log(ctx, $"PrimitiveTask.IsValid check");
-            }
-
             foreach (var condition in Conditions)
             {
-                if (ctx.LogDecomposition)
+                if (condition.IsValid(ctx) == false)
                 {
-                    ctx.CurrentDecompositionDepth++;
-                }
-
-                var result = condition.IsValid(ctx);
-
-                if (ctx.LogDecomposition)
-                {
-                    ctx.CurrentDecompositionDepth--;
-                    Log(ctx,
-                        $"PrimitiveTask.IsValid:{(result ? "Success" : "Failed")}:{condition.Name} is{(result ? "" : " not")} valid!",
-                        result ? ConsoleColor.DarkGreen : ConsoleColor.DarkRed);
-                }
-
-                if (result == false)
-                {
-                    if (ctx.LogDecomposition)
-                    {
-                        Log(ctx, $"PrimitiveTask.IsValid:Failed:Preconditions not met!", ConsoleColor.Red);
-                    }
-
+                    ctx.AddTrace(Parent, this, TraceOutcome.Refused, condition);
                     return false;
                 }
             }
 
-            if (ctx.LogDecomposition)
-            {
-                Log(ctx, $"PrimitiveTask.IsValid:Success!", ConsoleColor.Green);
-            }
-
             return true;
-        }
-
-        // ========================================================= LOGGING
-
-        protected virtual void Log(IContext ctx, string description, ConsoleColor color = ConsoleColor.White)
-        {
-            ctx.Log(Name, description, ctx.CurrentDecompositionDepth+1, this, color);
         }
     }
 }
