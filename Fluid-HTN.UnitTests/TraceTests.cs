@@ -136,5 +136,133 @@ namespace Fluid_HTN.UnitTests
 
             Assert.IsNull(ctx.DecompositionTrace);
         }
+
+        private static void AssertHasRecord(List<DecompositionTraceRecord> trace, string task, string method,
+            TraceOutcome outcome)
+        {
+            foreach (var record in trace)
+            {
+                if (record.Task?.Name == task && record.Method.Name == method && record.Outcome == outcome)
+                {
+                    return;
+                }
+            }
+
+            Assert.Fail($"No record {task} > {method}: {outcome}. Records: {string.Join("; ", trace)}");
+        }
+
+        /// <summary>
+        /// The condition of a compound method refuses it. This is the usual form of a method,
+        /// and a reader explains a plan from the condition in this record.
+        /// </summary>
+        [TestMethod]
+        public void RefusedCompoundMethodRecordsItsCondition()
+        {
+            var domain = new DomainBuilder<MyContext>("Test")
+                .Select("Choose")
+                    .Sequence("Trade")
+                        .Condition("Has partner", ctx => false)
+                        .Action("Barter")
+                        .End()
+                    .End()
+                    .Action("Wait")
+                    .End()
+                .End()
+                .Build();
+            var ctx = NewContext();
+
+            domain.FindPlan(ctx, out _);
+
+            var trace = ctx.DecompositionTrace;
+            Assert.AreEqual(3, trace.Count);
+            AssertRecord(trace[0], 2, "Choose", "Trade", TraceOutcome.Refused, "Has partner");
+            AssertRecord(trace[1], 2, "Choose", "Wait", TraceOutcome.Succeeded, null);
+            AssertRecord(trace[2], 1, "Test", "Choose", TraceOutcome.Succeeded, null);
+        }
+
+        /// <summary>
+        /// A sequence has a compound step and then a pause. The trace records the compound step
+        /// and the pause of the sequence.
+        /// </summary>
+        [TestMethod]
+        public void SequenceRecordsCompoundStepAndPause()
+        {
+            var domain = new DomainBuilder<MyContext>("Test")
+                .Sequence("Trade")
+                    .Select("Pick")
+                        .Action("Pick partner")
+                        .End()
+                    .End()
+                    .PausePlan()
+                    .Action("Barter")
+                    .End()
+                .End()
+                .Build();
+            var ctx = NewContext();
+
+            domain.FindPlan(ctx, out _);
+
+            var trace = ctx.DecompositionTrace;
+            Assert.AreEqual(4, trace.Count);
+            AssertRecord(trace[0], 3, "Pick", "Pick partner", TraceOutcome.Succeeded, null);
+            AssertRecord(trace[1], 2, "Trade", "Pick", TraceOutcome.Succeeded, null);
+            AssertRecord(trace[2], 2, "Trade", "Pause Plan", TraceOutcome.Partial, null);
+            AssertRecord(trace[3], 1, "Test", "Trade", TraceOutcome.Partial, null);
+        }
+
+        /// <summary>
+        /// A selector and a sequence with no subtasks are refused with no condition.
+        /// </summary>
+        [TestMethod]
+        public void EmptyCompoundMethodsRecordRefusedWithNoCondition()
+        {
+            var ctx = NewContext();
+            var choose = new Selector() { Name = "Choose" };
+            choose.AddSubtask(new Selector() { Name = "Empty selector", Parent = choose });
+            choose.AddSubtask(new Sequence() { Name = "Empty sequence", Parent = choose });
+            choose.AddSubtask(new PrimitiveTask() { Name = "Wait", Parent = choose });
+
+            choose.Decompose(ctx, 0, out _);
+
+            var trace = ctx.DecompositionTrace;
+            Assert.AreEqual(3, trace.Count);
+            AssertRecord(trace[0], 1, "Choose", "Empty selector", TraceOutcome.Refused, null);
+            AssertRecord(trace[1], 1, "Choose", "Empty sequence", TraceOutcome.Refused, null);
+            AssertRecord(trace[2], 1, "Choose", "Wait", TraceOutcome.Succeeded, null);
+        }
+
+        /// <summary>
+        /// A slot with no domain is refused with no condition. A slot with a domain
+        /// is recorded as a method of its selector or its sequence.
+        /// </summary>
+        [TestMethod]
+        public void SlotRecordsRefusedThenSucceeded()
+        {
+            var domain = new DomainBuilder<MyContext>("Test")
+                .Select("Choose")
+                    .Slot(1)
+                    .Sequence("Trade")
+                        .Slot(2)
+                    .End()
+                .End()
+                .Build();
+            var work = new DomainBuilder<MyContext>("Sub")
+                .Action("Work")
+                .End()
+                .Build();
+            var ctx = NewContext();
+
+            Assert.IsTrue(domain.TrySetSlotDomain(2, work));
+            domain.FindPlan(ctx, out _);
+
+            AssertRecord(ctx.DecompositionTrace[0], 2, "Choose", "Slot 1", TraceOutcome.Refused, null);
+            AssertHasRecord(ctx.DecompositionTrace, "Trade", "Slot 2", TraceOutcome.Succeeded);
+
+            var ctx2 = NewContext();
+            Assert.IsTrue(domain.TrySetSlotDomain(1, work));
+            domain.FindPlan(ctx2, out _);
+
+            AssertHasRecord(ctx2.DecompositionTrace, "Choose", "Slot 1", TraceOutcome.Succeeded);
+        }
     }
 }
