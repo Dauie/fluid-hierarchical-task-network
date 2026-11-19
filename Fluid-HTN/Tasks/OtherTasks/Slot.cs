@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using FluidHTN.Conditions;
+using FluidHTN.Debug;
 
 namespace FluidHTN.Compounds
 {
@@ -63,21 +64,13 @@ namespace FluidHTN.Compounds
 
         public virtual bool IsValid(IContext ctx)
         {
-            var result = Subtask != null;
-            
-            if (ctx.LogDecomposition)
+            if (Subtask == null)
             {
-                Log(ctx, $"Slot.IsValid:{(result ? "Success" : "Failed")}!", result ? ConsoleColor.Green : ConsoleColor.Red);
+                ctx.AddTrace(Parent, this, TraceOutcome.Refused, null);
+                return false;
             }
 
-            return result;
-        }
-
-        // ========================================================= LOGGING
-
-        protected virtual void Log(IContext ctx, string description, ConsoleColor color = ConsoleColor.White)
-        {
-            ctx.Log(Name, description, ctx.CurrentDecompositionDepth, this, color);
+            return true;
         }
     }
 }
