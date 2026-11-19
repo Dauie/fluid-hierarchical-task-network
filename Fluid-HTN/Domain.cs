@@ -59,6 +59,8 @@ namespace FluidHTN
         /// <summary>
         ///     Decomposes the domain on the given context. <paramref name="plan"/> is a new queue that the
         ///     caller owns: a later plan call does not change it, and a change of it does not change the domain.
+        ///     Each call clears the binding stack first. A call that continues a paused partial plan thus
+        ///     starts with no binding, and the values that the first part of the plan selected are gone.
         /// </summary>
         public DecompositionStatus FindPlan(T ctx, out Queue<ITask> plan)
         {

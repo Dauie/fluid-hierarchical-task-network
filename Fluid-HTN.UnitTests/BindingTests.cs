@@ -1,5 +1,8 @@
-﻿using FluidHTN;
+﻿using System.Collections.Generic;
+using FluidHTN;
 using FluidHTN.Compounds;
+using FluidHTN.Conditions;
+using FluidHTN.PrimitiveTasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Fluid_HTN.UnitTests
@@ -185,6 +188,120 @@ namespace Fluid_HTN.UnitTests
             Assert.AreEqual(1, ctx.BindingDepth);
             Assert.IsTrue(ctx.TryGetBinding(Partner, out var partner));
             Assert.AreEqual(7L, partner);
+        }
+
+        /// <summary>
+        /// A sequence with no selector above it: the sequence trim alone must remove the value.
+        /// This is the case when FindPlan continues a paused sequence. The test decomposes the sequence directly.
+        /// </summary>
+        [TestMethod]
+        public void FailedSequenceTrimsItsOwnValue()
+        {
+            var ctx = NewContext();
+            ctx.ContextState = ContextState.Planning;
+            var trade = new Sequence() { Name = "Trade" };
+            trade.AddSubtask(new PrimitiveTask() { Name = "Pick partner" }
+                .AddCondition(new FuncCondition<MyContext>("Select partner 7", c => { c.SetBinding(Partner, 7); return true; })));
+            trade.AddSubtask(new PrimitiveTask() { Name = "Barter" }
+                .AddCondition(new FuncCondition<MyContext>("Partner has goods", c => false)));
+
+            var status = trade.Decompose(ctx, 0, out _);
+
+            Assert.AreEqual(DecompositionStatus.Failed, status);
+            Assert.AreEqual(0, ctx.BindingDepth);
+        }
+
+        /// <summary>
+        /// A sequence step succeeds with an empty plan after it selects a value. The sequence then
+        /// fails, so it must remove the value. No built-in task does this, so the test uses a custom task.
+        /// </summary>
+        [TestMethod]
+        public void SequenceWithEmptyPlanTrimsItsValue()
+        {
+            var ctx = NewContext();
+            ctx.ContextState = ContextState.Planning;
+            var trade = new Sequence() { Name = "Trade" };
+            trade.AddSubtask(new EmptyPlanTask(Partner, 7));
+
+            var status = trade.Decompose(ctx, 0, out _);
+
+            Assert.AreEqual(DecompositionStatus.Failed, status);
+            Assert.AreEqual(0, ctx.BindingDepth);
+        }
+
+        /// <summary>
+        /// The condition of an inner selector selects a value. The inner selector then rejects,
+        /// because it cannot beat the running plan. The outer selector trim alone must remove the value.
+        /// </summary>
+        [TestMethod]
+        public void RejectedMethodUnderSelectorLeavesNoSelectedValue()
+        {
+            var ctx = NewContext();
+            ctx.ContextState = ContextState.Planning;
+            var choose = new Selector() { Name = "Choose" };
+            var inner = new Selector() { Name = "Inner" };
+            inner.AddCondition(new FuncCondition<MyContext>("Select partner 7", c => { c.SetBinding(Partner, 7); return true; }));
+            inner.AddSubtask(new PrimitiveTask() { Name = "Barter" }
+                .AddCondition(new FuncCondition<MyContext>("Partner has goods", c => false)));
+            inner.AddSubtask(new PrimitiveTask() { Name = "Wait" });
+            choose.AddSubtask(inner);
+            ctx.LastMTR.Add(0);
+            ctx.LastMTR.Add(0);
+
+            var status = choose.Decompose(ctx, 0, out _);
+
+            Assert.AreEqual(DecompositionStatus.Rejected, status);
+            Assert.AreEqual(0, ctx.BindingDepth);
+        }
+
+        /// <summary>
+        /// The decomposition succeeds, but it finds the plan that runs now, so FindPlan rejects it.
+        /// No compound task trims in this case. The FindPlan trim after a failed plan must remove the value.
+        /// </summary>
+        [TestMethod]
+        public void SamePlanRejectionLeavesNoSelectedValue()
+        {
+            var domain = new DomainBuilder<MyContext>("Test")
+                .Select("Choose")
+                    .Action("Barter")
+                        .Condition("Select partner 7", ctx => { ctx.SetBinding(Partner, 7); return true; })
+                    .End()
+                .End()
+                .Build();
+            var ctx = NewContext();
+            ctx.LastMTR.Add(0);
+            ctx.LastMTR.Add(0);
+
+            var status = domain.FindPlan(ctx, out _);
+
+            Assert.AreEqual(DecompositionStatus.Rejected, status);
+            Assert.AreEqual(0, ctx.BindingDepth);
+        }
+
+        /// <summary>
+        /// A custom compound task that selects a value and succeeds with an empty plan.
+        /// </summary>
+        private class EmptyPlanTask : Selector
+        {
+            private readonly int _key;
+            private readonly long _value;
+
+            public EmptyPlanTask(int key, long value)
+            {
+                _key = key;
+                _value = value;
+                Name = "Empty plan";
+
+                // A selector with no subtasks is not valid, so the task gets one that it does not use.
+                AddSubtask(new PrimitiveTask() { Name = "Unused" });
+            }
+
+            protected override DecompositionStatus OnDecompose(IContext ctx, int startIndex, out Queue<ITask> result)
+            {
+                ctx.SetBinding(_key, _value);
+                result = new Queue<ITask>();
+                return DecompositionStatus.Succeeded;
+            }
         }
     }
 }
