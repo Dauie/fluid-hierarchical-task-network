@@ -74,6 +74,9 @@ namespace FluidHTN
 
             ctx.ContextState = ContextState.Planning;
 
+            // Fork fix 2 (Dauie/numun#283): the values of the last plan stay until this call.
+            ctx.TrimBindings(0);
+
             plan = null;
             var status = DecompositionStatus.Rejected;
 
@@ -114,6 +117,9 @@ namespace FluidHTN
                 // Clear away any changes that might have been applied to the stack
                 // No changes should be made or tracked further when the plan failed.
                 ClearWorldStateStackChanges(ctx);
+
+                // A failed or rejected plan leaves no selected value.
+                ctx.TrimBindings(0);
             }
 
             // Fork fix 1 (Dauie/numun#283): the caller owns the plan. Each compound task owns one
