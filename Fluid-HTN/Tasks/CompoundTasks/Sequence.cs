@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using FluidHTN.Debug;
 using FluidHTN.PrimitiveTasks;
 
 namespace FluidHTN.Compounds
@@ -17,28 +18,14 @@ namespace FluidHTN.Compounds
             // Check that our preconditions are valid first.
             if (base.IsValid(ctx) == false)
             {
-                if (ctx.LogDecomposition)
-                {
-                    Log(ctx, $"Sequence.IsValid:Failed:Preconditions not met!", ConsoleColor.Red);
-                }
-
                 return false;
             }
 
             // Selector requires there to be subtasks to successfully select from.
             if (Subtasks.Count == 0)
             {
-                if (ctx.LogDecomposition)
-                {
-                    Log(ctx, $"Sequence.IsValid:Failed:No sub-tasks!", ConsoleColor.Red);
-                }
-
+                ctx.AddTrace(Parent, this, TraceOutcome.Refused, null);
                 return false;
-            }
-
-            if (ctx.LogDecomposition)
-            {
-                Log(ctx, $"Sequence.IsValid:Success!", ConsoleColor.Green);
             }
 
             return true;
@@ -63,20 +50,24 @@ namespace FluidHTN.Compounds
             // changes across every subtask attempted so far.
             var oldStackDepth = ctx.GetWorldStateChangeDepth(ctx.Factory);
 
+            // Fork fix 2 (Dauie/numun#283): the binding stack rolls back with the world state.
+            // A failed or rejected sequence removes the values that its subtasks selected.
+            var oldBindingDepth = ctx.BindingDepth;
+
             for (var taskIndex = startIndex; taskIndex < Subtasks.Count; taskIndex++)
             {
                 var task = Subtasks[taskIndex];
-
-                if (ctx.LogDecomposition)
-                {
-                    Log(ctx, $"Sequence.OnDecompose:Task index: {taskIndex}: {task?.Name}");
-                }
 
                 var status = OnDecomposeTask(ctx, task, taskIndex, oldStackDepth, out result);
                 switch (status)
                 {
                     case DecompositionStatus.Rejected:
                     case DecompositionStatus.Failed:
+                    {
+                        ctx.TrimBindings(oldBindingDepth);
+                        ctx.Factory.FreeArray(ref oldStackDepth);
+                        return status;
+                    }
                     case DecompositionStatus.Partial:
                     {
                         ctx.Factory.FreeArray(ref oldStackDepth);
@@ -88,7 +79,13 @@ namespace FluidHTN.Compounds
             ctx.Factory.FreeArray(ref oldStackDepth);
 
             result = Plan;
-            return result.Count == 0 ? DecompositionStatus.Failed : DecompositionStatus.Succeeded;
+            if (result.Count == 0)
+            {
+                ctx.TrimBindings(oldBindingDepth);
+                return DecompositionStatus.Failed;
+            }
+
+            return DecompositionStatus.Succeeded;
         }
 
         protected override DecompositionStatus OnDecomposeTask(IContext ctx, ITask task, int taskIndex,
@@ -96,20 +93,16 @@ namespace FluidHTN.Compounds
         {
             if (task.IsValid(ctx) == false)
             {
-                if (ctx.LogDecomposition)
-                {
-                    Log(ctx, $"Sequence.OnDecomposeTask:Failed:Task {task.Name}.IsValid returned false!", ConsoleColor.Red);
-                }
-
                 Plan.Clear();
                 ctx.TrimToStackDepth(oldStackDepth);
                 result = Plan;
                 return task.OnIsValidFailed(ctx);
             }
 
+            // A refused task added its own trace record in IsValid. Each other path adds one here.
             if (task is ICompoundTask compoundTask)
             {
-                return OnDecomposeCompoundTask(ctx, compoundTask, taskIndex, oldStackDepth, out result);
+                return Trace(ctx, task, OnDecomposeCompoundTask(ctx, compoundTask, taskIndex, oldStackDepth, out result));
             }
             else if (task is IPrimitiveTask primitiveTask)
             {
@@ -117,11 +110,6 @@ namespace FluidHTN.Compounds
             }
             else if (task is PausePlanTask)
             {
-                if (ctx.LogDecomposition)
-                {
-                    Log(ctx, $"Sequence.OnDecomposeTask:Return partial plan at index {taskIndex}!", ConsoleColor.DarkBlue);
-                }
-
                 ctx.HasPausedPartialPlan = true;
                 ctx.PartialPlanQueue.Enqueue(new PartialPlanEntry()
                 {
@@ -130,22 +118,16 @@ namespace FluidHTN.Compounds
                 });
 
                 result = Plan;
-                return DecompositionStatus.Partial;
+                return Trace(ctx, task, DecompositionStatus.Partial);
             }
             else if (task is Slot slot)
             {
-                return OnDecomposeSlot(ctx, slot, taskIndex, oldStackDepth, out result);
+                return Trace(ctx, task, OnDecomposeSlot(ctx, slot, taskIndex, oldStackDepth, out result));
             }
 
             result = Plan;
             var s = result.Count == 0 ? DecompositionStatus.Failed : DecompositionStatus.Succeeded;
-
-            if (ctx.LogDecomposition)
-            {
-                Log(ctx, $"Sequence.OnDecomposeTask:{s}!", s == DecompositionStatus.Succeeded ? ConsoleColor.Green : ConsoleColor.Red);
-            }
-
-            return s;
+            return Trace(ctx, task, s);
         }
 
         protected override void OnDecomposePrimitiveTask(IContext ctx, IPrimitiveTask task, int taskIndex,
@@ -155,11 +137,6 @@ namespace FluidHTN.Compounds
             // at the Sequence level (in OnDecomposeTask/OnDecomposeCompoundTask) via TrimToStackDepth.
 
             // We don't add MTR tracking on sequences for primary sub-tasks, since they will always be included, so they're irrelevant to MTR tracking.
-
-            if (ctx.LogDecomposition)
-            {
-                Log(ctx, $"Sequence.OnDecomposeTask:Pushed {task.Name} to plan!", ConsoleColor.Blue);
-            }
 
             task.ApplyEffects(ctx);
             Plan.Enqueue(task);
@@ -174,11 +151,6 @@ namespace FluidHTN.Compounds
             // If result is null, that means the entire planning procedure should cancel.
             if (status == DecompositionStatus.Rejected)
             {
-                if (ctx.LogDecomposition)
-                {
-                    Log(ctx, $"Sequence.OnDecomposeCompoundTask:{status}: Decomposing {task.Name} was rejected.", ConsoleColor.Red);
-                }
-
                 Plan.Clear();
                 ctx.TrimToStackDepth(oldStackDepth);
 
@@ -189,11 +161,6 @@ namespace FluidHTN.Compounds
             // If the decomposition failed
             if (status == DecompositionStatus.Failed)
             {
-                if (ctx.LogDecomposition)
-                {
-                    Log(ctx, $"Sequence.OnDecomposeCompoundTask:{status}: Decomposing {task.Name} failed.", ConsoleColor.Red);
-                }
-
                 Plan.Clear();
                 ctx.TrimToStackDepth(oldStackDepth);
                 result = Plan;
@@ -204,21 +171,11 @@ namespace FluidHTN.Compounds
             {
                 var p = subPlan.Dequeue();
 
-                if (ctx.LogDecomposition)
-                {
-                    Log(ctx, $"Sequence.OnDecomposeCompoundTask:Decomposing {task.Name}:Pushed {p.Name} to plan!", ConsoleColor.Blue);
-                }
-
                 Plan.Enqueue(p);
             }
 
             if (ctx.HasPausedPartialPlan)
             {
-                if (ctx.LogDecomposition)
-                {
-                    Log(ctx, $"Sequence.OnDecomposeCompoundTask:Return partial plan at index {taskIndex}!", ConsoleColor.DarkBlue);
-                }
-
                 if (taskIndex < Subtasks.Count - 1)
                 {
                     ctx.PartialPlanQueue.Enqueue(new PartialPlanEntry()
@@ -233,11 +190,6 @@ namespace FluidHTN.Compounds
             }
 
             result = Plan;
-
-            if (ctx.LogDecomposition)
-            {
-                Log(ctx, $"Sequence.OnDecomposeCompoundTask:Succeeded!", ConsoleColor.Green);
-            }
 
             return DecompositionStatus.Succeeded;
         }
@@ -250,11 +202,6 @@ namespace FluidHTN.Compounds
             // If result is null, that means the entire planning procedure should cancel.
             if (status == DecompositionStatus.Rejected)
             {
-                if (ctx.LogDecomposition)
-                {
-                    Log(ctx, $"Sequence.OnDecomposeSlot:{status}: Decomposing {task.Name} was rejected.", ConsoleColor.Red);
-                }
-
                 Plan.Clear();
                 ctx.TrimToStackDepth(oldStackDepth);
 
@@ -265,11 +212,6 @@ namespace FluidHTN.Compounds
             // If the decomposition failed
             if (status == DecompositionStatus.Failed)
             {
-                if (ctx.LogDecomposition)
-                {
-                    Log(ctx, $"Sequence.OnDecomposeSlot:{status}: Decomposing {task.Name} failed.", ConsoleColor.Red);
-                }
-
                 Plan.Clear();
                 ctx.TrimToStackDepth(oldStackDepth);
                 result = Plan;
@@ -280,21 +222,11 @@ namespace FluidHTN.Compounds
             {
                 var p = subPlan.Dequeue();
 
-                if (ctx.LogDecomposition)
-                {
-                    Log(ctx, $"Sequence.OnDecomposeSlot:Decomposing {task.Name}:Pushed {p.Name} to plan!", ConsoleColor.Blue);
-                }
-
                 Plan.Enqueue(p);
             }
 
             if (ctx.HasPausedPartialPlan)
             {
-                if (ctx.LogDecomposition)
-                {
-                    Log(ctx, $"Sequence.OnDecomposeSlot:Return partial plan at index {taskIndex}!", ConsoleColor.DarkBlue);
-                }
-
                 if (taskIndex < Subtasks.Count - 1)
                 {
                     ctx.PartialPlanQueue.Enqueue(new PartialPlanEntry()
@@ -309,11 +241,6 @@ namespace FluidHTN.Compounds
             }
 
             result = Plan;
-
-            if (ctx.LogDecomposition)
-            {
-                Log(ctx, $"Sequence.OnDecomposeSlot:Succeeded!", ConsoleColor.Green);
-            }
 
             return DecompositionStatus.Succeeded;
         }

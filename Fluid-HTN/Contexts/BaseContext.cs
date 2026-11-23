@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using FluidHTN.Conditions;
 using FluidHTN.Debug;
 using FluidHTN.Factory;
+using FluidHTN.Compounds;
 
 namespace FluidHTN.Contexts
 {
@@ -21,7 +22,7 @@ namespace FluidHTN.Contexts
         public abstract List<string> MTRDebug { get; set; }
         public abstract List<string> LastMTRDebug { get; set; }
         public abstract bool DebugMTR { get; }
-        public abstract Queue<IBaseDecompositionLogEntry> DecompositionLog { get; set; }
+        public List<DecompositionTraceRecord> DecompositionTrace { get; set; }
         public abstract bool LogDecomposition { get; }
         public Queue<PartialPlanEntry> PartialPlanQueue { get; set; } = new Queue<PartialPlanEntry>();
         public bool HasPausedPartialPlan { get; set; } = false;
@@ -29,6 +30,10 @@ namespace FluidHTN.Contexts
         public abstract byte[] WorldState { get; }
 
         public Stack<KeyValuePair<EffectType, byte>>[] WorldStateChangeStack { get; protected set; }
+
+        // The binding stack (fork fix 2, Dauie/numun#283). A list, so that a read can go from the
+        // newest value to the oldest by index.
+        private List<KeyValuePair<int, long>> _bindings;
 
         // ========================================================= INITIALIZATION
 
@@ -41,6 +46,11 @@ namespace FluidHTN.Contexts
                 {
                     WorldStateChangeStack[i] = new Stack<KeyValuePair<EffectType, byte>>();
                 }
+            }
+
+            if (_bindings == null)
+            {
+                _bindings = new List<KeyValuePair<int, long>>();
             }
 
             if (DebugMTR)
@@ -58,9 +68,9 @@ namespace FluidHTN.Contexts
 
             if (LogDecomposition)
             {
-                if (DecompositionLog == null)
+                if (DecompositionTrace == null)
                 {
-                    DecompositionLog = new Queue<IBaseDecompositionLogEntry>();
+                    DecompositionTrace = new List<DecompositionTraceRecord>();
                 }
             }
 
@@ -159,6 +169,50 @@ namespace FluidHTN.Contexts
             }
         }
 
+        // ========================================================= BINDING STACK HANDLING
+
+        public int BindingDepth => _bindings?.Count ?? 0;
+
+        public void SetBinding(int key, long value)
+        {
+            // The executor checks the conditions of a task again during execution. A binding is a
+            // planning value, so a condition that selects a value then keeps the values of the plan.
+            if (ContextState == ContextState.Executing)
+            {
+                return;
+            }
+
+            _bindings.Add(new KeyValuePair<int, long>(key, value));
+        }
+
+        public bool TryGetBinding(int key, out long value)
+        {
+            if (_bindings != null)
+            {
+                for (var i = _bindings.Count - 1; i >= 0; i--)
+                {
+                    if (_bindings[i].Key == key)
+                    {
+                        value = _bindings[i].Value;
+                        return true;
+                    }
+                }
+            }
+
+            value = 0;
+            return false;
+        }
+
+        public void TrimBindings(int depth)
+        {
+            // No check of the context state or of Init: a compound task can decompose in the
+            // executing state and before Init (the upstream tests do). A trim then has no values to remove.
+            if (_bindings != null && _bindings.Count > depth)
+            {
+                _bindings.RemoveRange(depth, _bindings.Count - depth);
+            }
+        }
+
         // ========================================================= STATE RESET
 
         public virtual void Reset()
@@ -175,57 +229,17 @@ namespace FluidHTN.Contexts
             IsInitialized = false;
         }
 
-        // ========================================================= DECOMPOSITION LOGGING
+        // ========================================================= DECOMPOSITION TRACE
 
-        public void Log(string name, string description, int depth, ITask task, ConsoleColor color = ConsoleColor.White)
+        public void AddTrace(ICompoundTask task, ITask method, TraceOutcome outcome, ICondition refusedCondition)
         {
             if (LogDecomposition == false)
             {
                 return;
             }
 
-            DecompositionLog.Enqueue(new DecomposedCompoundTaskEntry
-            {
-                Name = name,
-                Description = description,
-                Entry = task,
-                Depth = depth,
-                Color = color,
-            });
-        }
-
-        public void Log(string name, string description, int depth, ICondition condition, ConsoleColor color = ConsoleColor.DarkGreen)
-        {
-            if (LogDecomposition == false)
-            {
-                return;
-            }
-
-            DecompositionLog.Enqueue(new DecomposedConditionEntry
-            {
-                Name = name,
-                Description = description,
-                Entry = condition,
-                Depth = depth,
-                Color = color
-            });
-        }
-
-        public void Log(string name, string description, int depth, IEffect effect, ConsoleColor color = ConsoleColor.DarkYellow)
-        {
-            if (LogDecomposition == false)
-            {
-                return;
-            }
-
-            DecompositionLog.Enqueue(new DecomposedEffectEntry
-            {
-                Name = name,
-                Description = description,
-                Entry = effect,
-                Depth = depth,
-                Color = color,
-            });
+            DecompositionTrace.Add(new DecompositionTraceRecord(CurrentDecompositionDepth, task, method, outcome,
+                refusedCondition));
         }
     }
 }
