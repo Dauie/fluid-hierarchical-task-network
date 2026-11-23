@@ -59,6 +59,8 @@ namespace FluidHTN
         /// <summary>
         ///     Decomposes the domain on the given context. <paramref name="plan"/> is a new queue that the
         ///     caller owns: a later plan call does not change it, and a change of it does not change the domain.
+        ///     Each call clears the binding stack first. A call that continues a paused partial plan thus
+        ///     starts with no binding, and the values that the first part of the plan selected are gone.
         /// </summary>
         public DecompositionStatus FindPlan(T ctx, out Queue<ITask> plan)
         {
@@ -73,6 +75,9 @@ namespace FluidHTN
             }
 
             ctx.ContextState = ContextState.Planning;
+
+            // Fork fix 2 (Dauie/numun#283): the values of the last plan stay until this call.
+            ctx.TrimBindings(0);
 
             plan = null;
             var status = DecompositionStatus.Rejected;
@@ -114,6 +119,9 @@ namespace FluidHTN
                 // Clear away any changes that might have been applied to the stack
                 // No changes should be made or tracked further when the plan failed.
                 ClearWorldStateStackChanges(ctx);
+
+                // A failed or rejected plan leaves no selected value.
+                ctx.TrimBindings(0);
             }
 
             // Fork fix 1 (Dauie/numun#283): the caller owns the plan. Each compound task owns one

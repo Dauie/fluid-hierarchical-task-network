@@ -124,17 +124,25 @@ namespace FluidHTN.Compounds
 
                 var task = Subtasks[taskIndex];
 
+                // Fork fix 2 (Dauie/numun#283): a condition can select a value and then a later
+                // condition can fail. No world state changed, but the value must go. One int per
+                // attempt records the binding depth, so the selector allocates nothing more.
+                var oldBindingDepth = ctx.BindingDepth;
+
                 // Selector passes null for oldStackDepth: each subtask alternative is independent,
                 // so there are no accumulated world state effects to roll back between attempts.
                 var status = OnDecomposeTask(ctx, task, taskIndex, null, out result);
                 switch (status)
                 {
-                    case DecompositionStatus.Rejected:
                     case DecompositionStatus.Succeeded:
                     case DecompositionStatus.Partial:
                         return status;
+                    case DecompositionStatus.Rejected:
+                        ctx.TrimBindings(oldBindingDepth);
+                        return status;
                     case DecompositionStatus.Failed:
                     default:
+                        ctx.TrimBindings(oldBindingDepth);
                         continue;
                 }
             }

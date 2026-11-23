@@ -63,6 +63,10 @@ namespace FluidHTN.Compounds
             // changes across every subtask attempted so far.
             var oldStackDepth = ctx.GetWorldStateChangeDepth(ctx.Factory);
 
+            // Fork fix 2 (Dauie/numun#283): the binding stack rolls back with the world state.
+            // A failed or rejected sequence removes the values that its subtasks selected.
+            var oldBindingDepth = ctx.BindingDepth;
+
             for (var taskIndex = startIndex; taskIndex < Subtasks.Count; taskIndex++)
             {
                 var task = Subtasks[taskIndex];
@@ -77,6 +81,11 @@ namespace FluidHTN.Compounds
                 {
                     case DecompositionStatus.Rejected:
                     case DecompositionStatus.Failed:
+                    {
+                        ctx.TrimBindings(oldBindingDepth);
+                        ctx.Factory.FreeArray(ref oldStackDepth);
+                        return status;
+                    }
                     case DecompositionStatus.Partial:
                     {
                         ctx.Factory.FreeArray(ref oldStackDepth);
@@ -88,7 +97,13 @@ namespace FluidHTN.Compounds
             ctx.Factory.FreeArray(ref oldStackDepth);
 
             result = Plan;
-            return result.Count == 0 ? DecompositionStatus.Failed : DecompositionStatus.Succeeded;
+            if (result.Count == 0)
+            {
+                ctx.TrimBindings(oldBindingDepth);
+                return DecompositionStatus.Failed;
+            }
+
+            return DecompositionStatus.Succeeded;
         }
 
         protected override DecompositionStatus OnDecomposeTask(IContext ctx, ITask task, int taskIndex,
