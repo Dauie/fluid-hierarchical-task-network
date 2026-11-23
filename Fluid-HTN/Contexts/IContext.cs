@@ -66,11 +66,13 @@ namespace FluidHTN
         bool DebugMTR { get; }
 
         /// <summary>
+        /// The structured decomposition trace (fork fix 3, Dauie/numun#283). Init creates it when
+        /// LogDecomposition is true. The library only adds records; the caller reads and clears the list.
         /// </summary>
-        Queue<IBaseDecompositionLogEntry> DecompositionLog { get; set; }
+        List<DecompositionTraceRecord> DecompositionTrace { get; set; }
 
         /// <summary>
-        /// Whether our planning system should log our decomposition. Specially condition success vs failure.
+        /// Whether our planning system should record the decomposition trace.
         /// </summary>
         bool LogDecomposition { get; }
 
@@ -103,8 +105,34 @@ namespace FluidHTN
 
         int[] GetWorldStateChangeDepth(IFactory factory);
 
-        void Log(string name, string description, int depth, ITask task, ConsoleColor color = ConsoleColor.White);
-        void Log(string name, string description, int depth, ICondition condition, ConsoleColor color = ConsoleColor.DarkGreen);
-        void Log(string name, string description, int depth, IEffect effect, ConsoleColor color = ConsoleColor.DarkYellow);
+        /// <summary>
+        ///     The number of values on the binding stack. A compound task records it before a branch,
+        ///     and trims the stack back to it when the branch fails (fork fix 2, Dauie/numun#283).
+        /// </summary>
+        int BindingDepth { get; }
+
+        /// <summary>
+        ///     Push a value that the current branch selects, such as a trade partner, during planning.
+        ///     A failed branch trims its values with the world-state stacks, so no value of a failed
+        ///     branch stays. After a successful plan, the values stay until the next plan call.
+        ///     In the executing state, the call does nothing.
+        /// </summary>
+        void SetBinding(int key, long value);
+
+        /// <summary>
+        ///     Get the newest value of the key on the binding stack.
+        /// </summary>
+        bool TryGetBinding(int key, out long value);
+
+        /// <summary>
+        ///     Remove the values above the given depth from the binding stack.
+        /// </summary>
+        void TrimBindings(int depth);
+
+        /// <summary>
+        ///     Add one record to the decomposition trace at the current decomposition depth.
+        ///     The call does nothing when LogDecomposition is false.
+        /// </summary>
+        void AddTrace(ICompoundTask task, ITask method, TraceOutcome outcome, ICondition refusedCondition);
     }
 }
